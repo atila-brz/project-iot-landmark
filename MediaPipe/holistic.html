@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Projeto LIBRAS - Simplificado</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            background-color: #1e1e1e;
+            color: white;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 { margin-bottom: 10px; color: #d500f9; }
+
+        /* Container do vídeo */
+        .video-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            border: 3px solid #d500f9;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #000;
+        }
+
+        /* Canvas sobreposto ao vídeo */
+        .output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Oculta o vídeo original para mostrar apenas o canvas processado */
+        .input_video { display: none; }
+
+        /* Caixa de Resultado da Letra */
+        .result-box {
+            margin-top: 20px;
+            padding: 20px 40px;
+            background-color: #333;
+            border-radius: 10px;
+            text-align: center;
+            border: 2px solid #555;
+            min-width: 200px;
+        }
+
+        .big-letter {
+            font-size: 4em;
+            font-weight: bold;
+            color: #d500f9; /* Roxo Neon */
+            display: block;
+        }
+        
+        .instruction {
+            font-size: 0.9em;
+            color: #aaa;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Detector LIBRAS</h1>
+
+    <div class="video-container">
+        <video class="input_video"></video>
+        <canvas class="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <div class="result-box">
+        <span class="instruction">Faça um gesto (Mão Direita): A, B, L, V, Y, W</span>
+        <span id="letter-display" class="big-letter">---</span>
+    </div>
+
+    <script type="text/javascript">
+        // 1. Configuração dos Elementos
+        const videoElement = document.getElementsByClassName('input_video')[0];
+        const canvasElement = document.getElementsByClassName('output_canvas')[0];
+        const canvasCtx = canvasElement.getContext('2d');
+        const letterDisplay = document.getElementById('letter-display');
+
+        // 2. Função Auxiliar de Geometria
+        function distance(p1, p2) {
+            return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+        }
+
+        // 3. LÓGICA DE IDENTIFICAÇÃO DE LETRAS
+        function detectLetter(landmarks) {
+            // Pontos principais dos dedos (Ponta e Dobra)
+            // 4=Dedão, 8=Indicador, 12=Médio, 16=Anelar, 20=Mindinho
+            
+            // Verifica se dedos estão levantados (Y da ponta < Y da dobra)
+            // Nota: No canvas, Y=0 é o topo, então "menor" significa "mais alto"
+            const indexOpen = landmarks[8].y < landmarks[6].y;
+            const middleOpen = landmarks[12].y < landmarks[10].y;
+            const ringOpen = landmarks[16].y < landmarks[14].y;
+            const pinkyOpen = landmarks[20].y < landmarks[18].y;
+            
+            // Lógica do Polegar (Baseada na abertura lateral)
+            // Se a ponta do dedão (4) está longe do mindinho (17), ele está aberto
+            const thumbOpen = distance(landmarks[4], landmarks[17]) > 0.25; // Ajuste esse valor se precisar
+
+            // --- REGRAS DAS LETRAS ---
+
+            // A: Mão fechada, polegar colado
+            if (!indexOpen && !middleOpen && !ringOpen && !pinkyOpen && !thumbOpen) return "A";
+
+            // B: 4 dedos para cima, polegar fechado
+            if (indexOpen && middleOpen && ringOpen && pinkyOpen && !thumbOpen) return "B";
+            
+            // L: Polegar e Indicador
+            if (thumbOpen && indexOpen && !middleOpen && !ringOpen && !pinkyOpen) return "L";
+
+            // V: Indicador e Médio (Paz e Amor)
+            if (!thumbOpen && indexOpen && middleOpen && !ringOpen && !pinkyOpen) return "V";
+
+            // W: Três dedos (M, mas visualmente W)
+            if (!thumbOpen && indexOpen && middleOpen && ringOpen && !pinkyOpen) return "W";
+            
+            // Y: Hang Loose (Dedão e Mindinho)
+            if (thumbOpen && !indexOpen && !middleOpen && !ringOpen && pinkyOpen) return "Y";
+
+            return null;
+        }
+
+        // 4. Função Principal de Processamento (Loop)
+        function onResults(results) {
+            // Limpa e desenha o vídeo no canvas
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            // Espelhar a imagem para ficar natural (Selfie Mode)
+            canvasCtx.translate(canvasElement.width, 0);
+            canvasCtx.scale(-1, 1);
+            
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            // Variáveis das mãos
+            const rHand = results.rightHandLandmarks;
+            const lHand = results.leftHandLandmarks;
+            
+            // Desenhar esqueleto das mãos (Se existirem)
+            if (rHand) {
+                drawConnectors(canvasCtx, rHand, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+                drawLandmarks(canvasCtx, rHand, {color: '#FF0000', lineWidth: 1, radius: 4});
+            }
+            if (lHand) {
+                drawConnectors(canvasCtx, lHand, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+                drawLandmarks(canvasCtx, lHand, {color: '#FF0000', lineWidth: 1, radius: 4});
+            }
+
+            // --- DETECÇÃO DA LETRA ---
+            let detected = null;
+
+            // Tenta detectar na mão direita primeiro, depois na esquerda
+            if (rHand) detected = detectLetter(rHand);
+            else if (lHand) detected = detectLetter(lHand);
+
+            canvasCtx.restore(); // Restaura o espelhamento para não afetar o próximo frame
+
+            // Atualiza o texto na tela
+            if (detected) {
+                letterDisplay.innerText = detected;
+                letterDisplay.style.color = "#00FF00"; // Verde quando detecta
+            } else {
+                letterDisplay.innerText = "---";
+                letterDisplay.style.color = "#555";
+            }
+        }
+
+        // 5. Inicialização do MediaPipe Holistic
+        const holistic = new Holistic({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
+        }});
+
+        holistic.setOptions({
+            selfieMode: false, // Fazemos o espelhamento manual no canvas
+            upperBodyOnly: true,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        holistic.onResults(onResults);
+
+        // 6. Inicialização da Câmera
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await holistic.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        
+        camera.start();
+    </script>
+</body>
+</html>
